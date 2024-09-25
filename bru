@@ -14,10 +14,10 @@ fi
 # Create or clear the success log file
 > "$success_log_file"
 
-# Read all IP:username pairs into an array
-mapfile -t iplog_entries < "$iplog_file"
-# Read all passwords into an array
-mapfile -t passwords < "$passwords_file"
+# Read all IP:username pairs into an array, filter out empty lines
+mapfile -t iplog_entries < <(grep -v '^$' "$iplog_file")
+# Read all passwords into an array, filter out empty lines
+mapfile -t passwords < <(grep -v '^$' "$passwords_file")
 
 # Get the total number of attempts
 total_attempts=$(( ${#iplog_entries[@]} * ${#passwords[@]} ))
@@ -92,9 +92,6 @@ done
 
 # Clean up the temporary file
 rm "$temp_passwords_file"
-
-# Final calculations
-elapsed_time=$(( $(date +%s) - start_time ))
 
 # Final output
 echo "Completed processing all entries in $iplog_file."
