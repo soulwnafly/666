@@ -66,6 +66,9 @@ for password in "${passwords[@]}"; do
         # Update current attempt count
         current_attempt=$((current_attempt + 1))
         
+        # Add a delay to wait for server response (adjust the duration as necessary)
+        sleep 2  # 2 seconds delay
+        
         # Update elapsed time and display progress
         elapsed_time=$(( $(date +%s) - start_time ))
         display_progress "$elapsed_time" "$current_attempt" "$total_attempts" "$successful_attempts"
