@@ -1,5 +1,3 @@
-#!/bin/bash
-
 # Define input files
 iplog_file="iplog.txt"
 passwords_file="passwords.txt"
@@ -13,8 +11,8 @@ if [[ ! -f "$iplog_file" || ! -f "$passwords_file" ]]; then
 fi
 
 # Create or clear the log files
-> "$success_log_file"
-> "$error_log_file"
+: > "$success_log_file" 
+: > "$error_log_file" 
 
 # Read all RDP entries into an array, filter out empty lines
 mapfile -t iplog_entries < <(grep -v '^$' "$iplog_file")
@@ -26,18 +24,15 @@ successful_attempts=0
 start_time=$(date +%s)
 
 # Function to display progress
-display_progress() {
-    local elapsed_time=$1
-    local current_attempt=$2
-    local successful_attempts=$3
+display_progress() { 
+    local elapsed_time=$1 
+    local current_attempt=$2 
+    local successful_attempts=$3 
     local current_password=$4
-
     local percent=$(( (current_attempt * 100) / (total_passwords * ${#iplog_entries[@]})))
     local estimated_time_left=$(( (elapsed_time * (total_passwords * ${#iplog_entries[@]})) / current_attempt - elapsed_time ))
-
-    # Calculate attempts per minute
     local attempts_per_minute=$(( current_attempt * 60 / elapsed_time ))
-
+    
     tput clear
     echo "Total Attempts: $((total_passwords * ${#iplog_entries[@]}))"
     echo "Progress: $current_attempt / $((total_passwords * ${#iplog_entries[@]})) ($percent%)"
@@ -45,7 +40,7 @@ display_progress() {
     echo "Successful logins: $successful_attempts"
     echo "Time elapsed: $(date -u -d @$elapsed_time +%H:%M:%S)"
     echo "Current Speed: $attempts_per_minute attempts/minute"
-
+    
     if (( current_attempt > 0 )); then
         echo "Estimated Time Left: $(printf '%02d:%02d:%02d' $((estimated_time_left/3600)) $(( (estimated_time_left%3600)/60 )) $((estimated_time_left%60)))
     fi
@@ -61,15 +56,15 @@ mapfile -t passwords < <(grep -v '^$' "$passwords_file")
 for password in "${passwords[@]}"; do
     # Ensure the password is not empty
     if [[ -z "$password" ]]; then continue; fi
-
-    # Check all hosts for the current password
+    
+    # Loop through each entry in the iplog
     for entry in "${iplog_entries[@]}"; do
         IFS="://" read -r protocol full_url <<< "$entry"
         IFS=":" read -r rdp_ip target_name <<< "$full_url"
-
+        
         # Check if the rdp_ip and target_name are not empty
         if [[ -z "$rdp_ip" || -z "$target_name" ]]; then continue; fi
-
+        
         # Check if the host is alive (using ping)
         if ping -c 1 -W 1 "$rdp_ip" &> /dev/null; then
             # Run Hydra for each username and password pair, capturing output
@@ -85,7 +80,7 @@ for password in "${passwords[@]}"; do
             
             # Update elapsed time
             elapsed_time=$(( $(date +%s) - start_time ))
-
+            
             # Display progress
             display_progress "$elapsed_time" "$current_attempt" "$successful_attempts" "$password"
         else
