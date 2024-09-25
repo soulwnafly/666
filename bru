@@ -39,12 +39,17 @@ display_progress() {
     local percent=$(( (current_attempt * 100) / total_attempts ))
     local estimated_time_left=$(( (elapsed_time * total_attempts / current_attempt) - elapsed_time ))
 
+    # Calculate attempts per minute
+    local attempts_per_minute=$(( current_attempt * 60 / elapsed_time ))
+
     tput clear
     echo "Total Attempts: $total_attempts"
     echo "Progress: $current_attempt / $total_attempts ($percent%)"
     echo "Currently checking password: '$current_password' for host: '$current_host'"
     echo "Successful logins: $successful_attempts"
     echo "Time elapsed: $(date -u -d @$elapsed_time +%H:%M:%S)"
+    echo "Current Speed: $attempts_per_minute attempts/minute"
+
     if (( current_attempt > 0 )); then
         echo "Estimated Time Left: $(printf '%02d:%02d:%02d' $((estimated_time_left/3600)) $(( (estimated_time_left%3600)/60 )) $((estimated_time_left%60)))"
     fi
