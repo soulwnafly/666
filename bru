@@ -2,8 +2,8 @@
 
 # Define the input files
 iplog_file="iplog.txt"
-passwords_file="passwords1.txt"
-success_log_file="successful_logins1.txt"
+passwords_file="passwords.txt"
+success_log_file="successful_logins.txt"
 
 # Check if the input files exist
 if [[ ! -f "$iplog_file" || ! -f "$passwords_file" ]]; then
@@ -28,24 +28,19 @@ start_time=$(date +%s)
 # Create a temporary file to store remaining passwords
 temp_passwords_file=$(mktemp)
 
-# Function to display progress with added UI information
+# Function to display progress with progress bar and time left graph
 display_progress() {
     local elapsed_time=$1
     local current_attempt=$2
     local total_attempts=$3
     local successful_attempts=$4
     local current_password=$5
+    local current_host=$6
 
     local progress_bar_length=50
     local treats_per_minute=0
     local estimated_time_left=0
     local percent=0
-
-    # Calculate attempts per second
-    local tps=0
-    if (( elapsed_time > 0 )); then
-        tps=$(( current_attempt / elapsed_time ))
-    fi
 
     # Avoid division by zero for the rate and estimated time
     if (( current_attempt > 0 && elapsed_time > 0 )); then
@@ -69,31 +64,50 @@ display_progress() {
         progress_bar="${progress_bar}-"
     done
 
+    # Time left graph (using 20 dots)
+    local time_graph_length=20
+    local completed_time_graph_length=0
+    if (( elapsed_time > 0 && (elapsed_time + estimated_time_left) > 0 )); then
+        completed_time_graph_length=$(( (elapsed_time * time_graph_length) / (elapsed_time + estimated_time_left) ))
+    fi
+    local time_graph=""
+
+    for ((i=0; i<completed_time_graph_length; i++)); do
+        time_graph="${time_graph}."
+    done
+    for ((i=completed_time_graph_length; i<time_graph_length; i++)); do
+        time_graph="${time_graph} "
+    done
+
     # Clear the screen (only part of it, keeping the last few lines)
     tput cup 0 0
     echo -ne "\033[2K"  # Clear the current line
     echo "Progress: $current_attempt / $total_attempts ($percent%)"
-    echo "Current Password: $current_password"
 
-    tput cup 2 0
+    tput cup 1 0
     echo -ne "\033[2K"  # Clear the current line
     echo "Progress Bar: [$progress_bar]"
 
-    tput cup 3 0
+    tput cup 2 0
     echo -ne "\033[2K"  # Clear the current line
-    echo "Estimated Time Left: $(printf '%02d:%02d:%02d' $((estimated_time_left/3600)) $(( (estimated_time_left%3600)/60 )) $((estimated_time_left%60)))"
+    echo "Time left graph: [$time_graph]"
 
-    tput cup 4 0
+    tput cup 3 0
     echo -ne "\033[2K"  # Clear the current line
     echo "Attempts per minute: $treats_per_minute"
 
-    tput cup 5 0
+    tput cup 4 0
     echo -ne "\033[2K"  # Clear the current line
     echo "Successful logins: $successful_attempts"
 
-    tput cup 6 0
+    tput cup 5 0
     echo -ne "\033[2K"  # Clear the current line
     echo "Time elapsed: $(date -u -d @$elapsed_time +%H:%M:%S)"
+
+    # Display the current password and host being checked
+    tput cup 6 0
+    echo -ne "\033[2K"  # Clear the current line
+    echo "Checking password '$current_password' for host '$current_host'"
 }
 
 # Print initial static UI
@@ -129,16 +143,16 @@ for password in "${passwords[@]}"; do
         
         # Update elapsed time
         elapsed_time=$(( $(date +%s) - start_time ))
-        
-        # Display progress including current password
-        display_progress "$elapsed_time" "$current_attempt" "$total_attempts" "$successful_attempts" "$password"
+
+        # Display progress
+        display_progress "$elapsed_time" "$current_attempt" "$total_attempts" "$successful_attempts" "$password" "$full_url"
     done
 
     # Write the password to the temp file (it's been checked)
     echo "$password" >> "$temp_passwords_file"
 
-    # Remove checked passwords from the original file as we go
-    grep -vFf "$temp_passwords_file" "$passwords_file" > "${passwords_file}.new"
+    # Remove checked passwords from the original file after checking against all hosts
+    grep -vF "$password" "$passwords_file" > "${passwords_file}.new"
     mv "${passwords_file}.new" "$passwords_file"
 done
 
