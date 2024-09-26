@@ -60,6 +60,7 @@ attempt_login() {
     if echo "$hydra_output" | grep -q "success"; then
         echo "$(date '+%Y-%m-%d %H:%M:%S') - Successful login with $username on rdp://$rdp_ip using password: $password" >> "$success_log_file"
         ((successful_attempts++))
+        echo "Valid credentials: $username:$password on rdp://$rdp_ip"
     fi
 }
 
